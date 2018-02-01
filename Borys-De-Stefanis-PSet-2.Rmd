@@ -1,0 +1,202 @@
+---
+title: "Problem Set 2"
+subtitle: "Kasper Borys and Fernando De Stefanis"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(testthat)
+require(xtable)
+require(pander)
+```
+
+This homework builds on what we studied in class. We are going to simulate from the very simple model of labor supply we considered.
+
+The agent problem is
+
+$$
+\max_{c,h,e} c - \beta \frac{h^{1+\gamma}}{1+\gamma}\\
+\text{s.t. } c = e \cdot \rho \cdot w\cdot h +(1-e)\cdot r \cdot  h
+$$
+The individual takes his wage $w$ as given, he chooses hours of work $h$ and consumption $c$. He also chooses whether to work in the labor force or to work at home where he has an equivalent wage $r$.
+
+<span class="label label-success">Question 1</span> Do we expect to see any income effect given our model? What if we substituted $c$ in the utility for $\frac{c^{1+\eta}}{1+\eta}$?
+
+<span class="label label-success">Answer</span> We do not expect to see any income effect in this specific version of the model. Solving for the first order condition gives us:
+$$
+h=\displaystyle\left(\frac{e\rho w+(1-e)r}{\beta}\right)^{\frac1\gamma}
+$$
+This function is increasing in $w$ and in $r$, though only one at a time since $e$ only takes values $0$ and $1$.
+
+If we substitute $c$ in the utility for $\frac{c^{1+\eta}}{1+\eta}$ then the first order condition gives us:
+$$
+h=\displaystyle\left(\frac{e(\rho w)^{1+\eta}+(1-e)r^{1+\eta}}{\beta}\right)^{\frac{1}{\gamma-\eta}}
+$$
+which is still increasing in $w$ or $r$ if $e=1$ or $e=0$, respectively. However the exponent to $w$ or $r$ creates an income effect as marginal increases in the value of one's labor lead to a greater degree of diminishing marginal increases in hours worked.
+
+## Simulating data
+
+We are going to simulate a data set where agents will choose participation as well as the number of hours if they decide to work. This requires for us to specify how each of the individual specific variables are drawn. We then set the following:
+
+$$
+\begin{align*}
+\log W_i     &= \eta X_i + Z_i + u_i  \\
+\log R_i     &= \delta_0 + \log(W_i) + \delta Z_i + \xi_i \\
+\log \beta_i &= \nu X_i +\epsilon_i +  a \xi_i   \\
+\end{align*}
+$$
+
+and finally $(X_i,Z_i,\epsilon_i,u_i,\xi_i)$ are independent normal draws. Given all of this we can simulate our data. 
+
+<span class="label label-success">Question 2</span> What does the $a$ parameter capture here?
+
+<span class="label label-success">Answer</span> The parameter $a$ is meant to capture the degree of endogeneity existing between $R_i$ and $\beta_i$. We would expect these to be covariates for a variety of reasons; for example, people with a lower home productivity are just lazier people, so their distaste for labor would be stronger. In general, we are concerned that $a$ might not be 0, since in this case we know that our estimates for the "vanilla" regression will be wrong. 
+
+
+
+
+<span class="label label-success">Question 3</span> Simulate data with $a=0$ and $a=1$. Comment on the value of the coefficient of the regression of log hours on log wage and X.
+
+<span class="label label-success">Answer</span> As we expected from the previous question, when we have $a=0$ our regression gives us estimates for the coefficients that are very close to the true parameter, as we can see here:  
+
+```{r echo = FALSE, cache = TRUE, results = 'hide'}
+library(data.table)
+p  = list(gamma = 0.8,beta=1,a=0,rho=1,eta=0.2,delta=-0.2,delta0=-0.1,nu=0.5) # parameters
+N=10000  # size of the simulation
+simdata1 = data.table(i=1:N,X=rnorm(N))
+
+# simulating variables
+simdata1[,X := rnorm(N)]
+simdata1[,Z := rnorm(N)]
+simdata1[,u := rnorm(N)]
+simdata1[,lw := p$eta*X  + Z + 0.2*u ]  # log wage
+
+simdata1[,xi := rnorm(N)*0.2]
+simdata1[,lr := lw + p$delta0+ p$delta*Z + xi]; # log home productivity
+
+simdata1[,eps:=rnorm(N)*0.2]
+simdata1[,beta := exp(p$nu*X  + p$a*xi + eps)]; # heterogenous beta coefficient
+
+# compute decision variables
+simdata1[, lfp := log(p$rho) + lw >= lr] # labor force participation
+simdata1[, h   := (p$rho * exp(lw)/beta)^(1/p$gamma)] # hours
+simdata1[lfp==FALSE,h:=NA][lfp==FALSE,lw:=NA]
+simdata1[,mean(lfp)]
+```
+
+```{r}
+print(p$a)
+lm(log(h)~lw+X, data=simdata1)
+```
+
+Consider that the coefficient for lw is $\frac1\gamma = \frac1{0.8}=1.25$, whereas the coefficient for X is $-\frac\nu\gamma = -\frac{0.5}{0.8} =-0.625$.
+
+Instead, when we set $a=0$, our estimates are far off the mark, as we can see below. Again, this is because we have some form of endogeneity bias we are not correcting for, as we will see in the upcoming questions.
+
+```{r echo = FALSE, cache = TRUE, results = 'hide'}
+library(data.table)
+p  = list(gamma = 0.8,beta=1,a=1,rho=1,eta=0.2,delta=-0.2,delta0=-0.1,nu=0.5) # parameters
+N=10000  # size of the simulation
+simdata = data.table(i=1:N,X=rnorm(N))
+
+# simulating variables
+simdata[,X := rnorm(N)]
+simdata[,Z := rnorm(N)]
+simdata[,u := rnorm(N)]
+simdata[,lw := p$eta*X  + Z + 0.2*u ]  # log wage
+
+simdata[,xi := rnorm(N)*0.2]
+simdata[,lr := lw + p$delta0+ p$delta*Z + xi]; # log home productivity
+
+simdata[,eps:=rnorm(N)*0.2]
+simdata[,beta := exp(p$nu*X  + p$a*xi + eps)]; # heterogenous beta coefficient
+
+# compute decision variables
+simdata[, lfp := log(p$rho) + lw >= lr] # labor force participation
+simdata[, h   := (p$rho * exp(lw)/beta)^(1/p$gamma)] # hours
+simdata[lfp==FALSE,h:=NA][lfp==FALSE,lw:=NA]
+simdata[,mean(lfp)]
+```
+
+```{r}
+print(p$a)
+lm(log(h)~lw+X, data=simdata)
+```
+
+
+
+## Heckman correction
+
+<span class="label label-success">Question 4</span> Derive the expression for the Heckman correction term as a function of known parameters. In other words, derive $E( a \xi_i + \epsilon_i | lfp=1)$.
+
+Construction of this epxression requires us to recover the parameters $\delta/\sigma_xi,\delta_0/\sigma_xi$. We can get these by running a probit of participation on $Z_i$. 
+```{r cache = TRUE}
+fit2 = glm(lfp ~ Z,simdata,family = binomial(link = "probit"))
+fit2
+```
+<span class="label label-success">Question 5</span> Check that the regression does recover correctly the coefficients. Use them to construct the inverse Mills ratio. Use the correction you created and show that the regression with this extra term delivers the correct estimates for $\gamma$ even in the case where $a\neq 0$.
+
+<span class="label label-success">Answer</span> Let's first check the results; in the regression above, we expect intercept$\sim\frac{\delta_0}{\sigma_{\xi}} = 0.5$, while the coefficient on Z is $\sim \frac{\delta}{\sigma_{\xi}} = 1$ Now we compute the Inverse Mills Ratio:
+
+$$
+E( a \xi_i + \epsilon_i | lfp=1) = \\
+E( a \xi_i + \epsilon_i |\rho w \geq R_i)= \\
+E( a \xi_i + \epsilon_i |log(\rho)+log(w)\geq log(R_i))
+$$
+Noticing that $\rho = 1$ implies $log(\rho) = 0$, this becomes:
+
+$$
+E( a \xi_i + \epsilon_i |log(w)\geq log(R_i))= \\ 
+E( a \xi_i + \epsilon_i |0\geq \delta_0+\delta Z_i+\xi_i)
+$$
+Now, we know that $E(\epsilon_i) = 0$ unconditionally since it is independently drawn, so we can eliminate it; it follows that this becomes:
+$$
+aE( \xi_i  |\xi_i\leq -\delta_0-\delta Z_i)
+$$
+Using the inverse Mills Ratio formula, this becomes:
+
+$$
+a\sigma_{\xi}\cdot \displaystyle\frac{\phi(\frac{-\delta_0-\delta Z_i}{\sigma_{\xi}})}{\Phi(\frac{-\delta_0-\delta Z_i}{\sigma_{\xi}})}
+$$
+
+Hence, we now generate the correction in our dataset with the following code: 
+
+```{r cache = TRUE}
+sigmaxi = sqrt(var(simdata[ ,xi]))
+simdata[, lambda := sigmaxi*(dnorm(+fit2$coefficients[1]+fit2$coefficients[2]*Z)/pnorm(+fit2$coefficients[1]+fit2$coefficients[2]*Z))]
+```
+
+We now run the regression on this corrected model, with the following code:
+
+
+```{r cache = TRUE}
+lm(log(h)~lw+X+lambda, data=simdata)
+```
+As we can see, our correction works! All the estimates are very close to the true parameters.
+
+
+## Repeated cross-section
+
+Lastly we want to replicate the approach of Blundell, Duncan and Meghir. To justify such an appraoach we are going to include an additional endogeneity concern between the wage and the disutility of hours of worked. We want to do the following:
+
+ 1. add the wage residual $u_i$ inside the expression for $\beta_i$ (similar to the $\xi$ term)
+ 2. simulate 2 data-sets (two different cross-sections, redraw everything). However in the second cross-section change the $rho$ to 1.2
+
+Our final step is then to try to recover the wage elasticty by differencing across periods usig the tax variation. To do so, we need to compute time specific Mills ratios. 
+
+<span class="label label-success">Question 6</span> Why do we need to estimate the parameters of the selection equation separately for each period?
+
+<span class="label label-success">Answer</span>
+The labor-force-participation variable $e$ is a function of $\rho$; we have $e=1$ if $\rho w \geq r$ and $e=0$ otherwise. Thus changing the $\rho$ across cross-sections will affect which data points we can observe, meaning we may estimate different parameters than in the DGP for when $\rho=1$.
+
+<span class="label label-success">Question 7</span> Create the heckman correction term for each observation in each period. Then cut the X into a few values (picking some threshold). Finally compute all first difference in the time dimension (including the mills ratio difference). Finally run the regression using the different group as obervations and the difference as variables. Do this allow to recover the correct $\gamma$?
+
+
+
