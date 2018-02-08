@@ -1,0 +1,227 @@
+---
+title: "Problem Set 3"
+subtitle: "Kasper Borys and Fernando De Stefanis"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+---
+
+```{r setup, include=FALSE, cache=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+require(testthat)
+require(xtable)
+require(pander)
+require(kableExtra)
+require(ggplot2)
+require(texreg)
+require(readstata13) 
+require(sandwich)
+require(data.table)
+require(lmtest)
+
+options(knitr.table.format = "html") 
+data = read.dta13("~/Desktop/Courses/Econometrics/Applied Micro/Problem Sets/PSet 3/files to share/CPS_2012_micro.dta") 
+data = data.table(data)
+data$age = as.numeric(data$age)
+
+set.seed(60356548) # I fix the seed to make sure the draws are reproducible
+data <- data[,fp := runif(1)>0.5, statefip]
+fit1 = lm(lnwage ~fp,data)
+htmlreg(fit1,single.row=TRUE)
+```
+
+<span class="label label-success">Question 3</span> Follow the previous steps and report the rejection rate of the test on fp. You should find something close to 5% and you should feel better!
+
+<span class="label label-success">Answer</span> Here is the code we ran:
+
+```{r cache=TRUE}
+#Question 3 Step 4
+var_est = var(data$lnwage) #Estimate the variance like in Step 1
+rejected = 0 #Announce a counter
+for (i in 1:500){
+ data <- data[,y2 := rnorm(.N)*var_est] # Generate a new y2 every time
+ regression <- lm(y2~fp, data) #Step 3
+ p_value = summary(regression)$coefficients[2,4] #Extract the p-value
+ if (p_value<0.05){rejected = rejected + 1} #If the p-value is below our significance threshold, we add one to the counter
+}
+reject_ratio = rejected / 500 #Compute the rejection ratio
+print(reject_ratio)
+```
+
+As we can see, the result is close to 0.05, which is what we expected.
+
+
+<span class="label label-success">Question 4</span> Follow the steps and report the rejection rate for each of the variance evaluation.
+
+<span class="label label-success">Answer</span> Here is the code we ran:
+
+```{r cache = TRUE}
+regression_2 = lm(lnwage ~ yrseduc + age + I(age^2), data) #Run the model to compute the residuals
+res_squared = residuals(regression_2)^2 #Store the squared residuals, Step 1
+hetero_var_model= lm(res_squared ~ yrseduc + age + I(age^2), data) #Regress squared residuals vs the model to obtain predicted variance
+s <- predict(hetero_var_model) #Store predicted variance
+pred <- predict(regression_2) #Store predicted value of y
+
+rej_const = 0 #Initiate counters
+rej_hc0 = 0
+
+for (i in 1:500) {
+  fict_dataset <- data.table(pred, s) #Generate a fictitious dataset with our predicted values
+  fict_dataset <- fict_dataset[ ,yvar := pred + rnorm(.N)*s] #Create the new y columns
+  fict_dataset <- fict_dataset[, fp:= data$fp] #Add fictitious policy to the dataset
+  n_model = lm(yvar~fp, fict_dataset) #Run new model
+  
+  sigtest_const = coeftest(n_model, vcov = vcovHC(n_model, type="const")) #Run significance tests for both the heteroskedasticity resistant and the normal variance
+  sigtest_hc0 = coeftest(n_model, vcov = vcovHC(n_model, type="HC0"))
+  
+  if (sigtest_const[2,4] < 0.05){ 
+    rej_const = rej_const + 1
+  }
+  if (sigtest_hc0[2,4] < 0.05){
+    rej_hc0 = rej_hc0 + 1
+  }
+}
+const_reject_ratio = rej_const/500 #Compute rejection ratios
+hc0_reject_ratio = rej_hc0/500
+
+print(const_reject_ratio)
+print(hc0_reject_ratio)
+```
+
+
+<span class="label label-success">Question 5</span> Consider the following code. Explain the expression that starts with data[, res_hat := {...
+
+```{r cache = TRUE}
+fit0  = lm(lnwage ~ yrseduc + age + I(age^2),data)
+data <- data[,yhat := predict(fit0)]
+rho = 0.8
+data <- data[, res_hat := {
+  r = rep(0,.N)
+  r[1] = rnorm(1) #Line 104
+  for (i in 2:.N) {
+    r[i] = rho*r[i-1] + rnorm(1)
+  }
+  r
+},statefip] #Line 109
+data <- data[,y2:= yhat + res_hat]
+data <- data[,fp := runif(1)>0.5, statefip]
+fitn = lm(y2 ~ fp+yrseduc + age + I(age^2),data)
+```
+
+<span class="label label-success">Answer</span> Here, we are generating our state-clustered standard errors. We are defining a new variable, res_hat. It is a column of our new dataset that is generated state by state, as we can see from line 109. For each state, we create a new empty column r as long as the number of entries for that state, then we draw the first entry of r as a random normal (line 104) and subsequent entries are defined in the for-loop as $r_i = \rho\cdot r_{i-1}+\epsilon_i$, where $\epsilon_i$ is drawn again from a standard normal. This ensures that these residuals have a very strong autocorrelation (which depends on the rho parameter), but they are independent from each other because the first entry of each r is drawn independently. This is what generates state-clustered errors. In lines 110 and below, we create a new y by adding our state-clustered errors to the predicted values of the usual linear model, and regress this against the corrections and the fictitious policy.
+
+<span class="label label-success">Question 6</span>For $\rho=0.7,0.8,0.9$ run 500 replications and report the proportion at each value of replication for which the coefficient on our ficutous policy was significant at 5%.
+
+```{r cache=TRUE}
+fit0  = lm(lnwage ~ yrseduc + age + I(age^2),data) #initial linear model
+data <- data[,yhat := predict(fit0)] #predictions from model
+# rho = 0.7 ###########################################
+rho = 0.7
+reject = 0
+for (i in 1:500){
+  data <- data[, res_hat := {
+    r = rep(0,.N)
+    r[1] = rnorm(1)
+    for (i in 2:.N) {
+      r[i] = rho*r[i-1] + rnorm(1)
+    }
+    r
+  },statefip] #generated residuals for each state based on auto-regressive process
+  data <- data[,y2:= yhat + res_hat] #adding residuals to predicted levels
+  data <- data[,fp := runif(1)>0.5, statefip]
+  fitn = lm(y2 ~ fp+yrseduc + age + I(age^2),data) #regressing new values
+  
+  htmlreg(fitn,single.row=TRUE,omit.coef="state")
+  summary(fitn)
+  p_value = summary(fitn)$coefficients[2,4]
+  if (p_value<0.05){reject = reject+1}
+}
+rej_ratio0.7 = reject/500
+
+
+# rho = 0.8 ###########################################
+rho = 0.8
+reject = 0
+for (i in 1:500){
+  data <- data[, res_hat := {
+    r = rep(0,.N)
+    r[1] = rnorm(1)
+    for (i in 2:.N) {
+      r[i] = rho*r[i-1] + rnorm(1)
+    }
+    r
+  },statefip]
+  data <- data[,y2:= yhat + res_hat]
+  data <- data[,fp := runif(1)>0.5, statefip]
+  fitn = lm(y2 ~ fp+yrseduc + age + I(age^2),data)
+
+  htmlreg(fitn,single.row=TRUE,omit.coef="state")
+  summary(fitn)
+  p_value = summary(fitn)$coefficients[2,4]
+  if (p_value<0.05){reject = reject+1}
+}
+rej_ratio0.8 = reject/500
+
+
+# rho = 0.9 ###########################################
+rho = 0.9
+reject = 0
+for (i in 1:500){
+  data <- data[, res_hat := {
+    r = rep(0,.N)
+    r[1] = rnorm(1)
+    for (i in 2:.N) {
+      r[i] = rho*r[i-1] + rnorm(1)
+    }
+    r
+  },statefip]
+  data <- data[,y2:= yhat + res_hat]
+  data <- data[,fp := runif(1)>0.5, statefip]
+  fitn = lm(y2 ~ fp+yrseduc + age + I(age^2),data)
+  
+  htmlreg(fitn,single.row=TRUE,omit.coef="state")
+  summary(fitn)
+  p_value = summary(fitn)$coefficients[2,4]
+  if (p_value<0.05){reject = reject+1}
+}
+rej_ratio0.9 = reject/500
+```
+```{r cache=TRUE}
+print(rej_ratio0.7)
+print(rej_ratio0.8)
+print(rej_ratio0.9)
+```
+We find the coefficient of fp to be significant a large proportion of the time here and thus reject the null hypothesis often. This rejection ratio is increasing in $\rho$, which makes sense because a higher $\rho$ means the res_hat's generated by our auto-regressive structure are more closely correlated with each other.
+
+<span class="label label-success">Question 7</span> Report the 0.05 and 0.95 quantiles for the regression coefficients in the state-level bootstrap simulation. This is a test at 10%, does this interval include 0?
+
+```{r cache=TRUE}
+states <- unique(data$statefip) #get list of states
+
+data[, fp:=NULL]
+data <- data[,fp := runif(1)>0.5, statefip] #assign policy randomly to states
+
+reg_coefs = rep(0,500)
+for (i in 1:500){
+  states_sample <- sample(states,51, replace = TRUE) #sample states with replacement
+  vectorOfTables <- vector(mode = "list", length = 51)
+  for (j in 1:51){
+    vectorOfTables[[j]] <- data[statefip == states_sample[j]]
+    #set up a vector of the state data
+    #this method is used rather than iterated rbind because it's faster
+  }
+  new_data = rbindlist(vectorOfTables) #dataset is ready
+  result <- lm(lnwage~fp+yrseduc+age+I(age^2), new_data) #run regression
+  reg_coefs[i] = summary(result)$coefficients[2,1]
+}
+reg_coefs = sort(reg_coefs) #sort coefficients from our 500 regressions
+```
+```{r cache=TRUE}
+print(reg_coefs[25]) #0.05 quantile
+print(reg_coefs[475]) #0.95 quantile
+```
+<span class="label label-success">Answer</span> The quantiles are printed above. Since the 0.05 is negative and the 0.95 is positive, this interval does include 0. Hence, we see that our bootstrapping technique allows us to show that the fictitious policy is, in fact, fictitious. 
