@@ -1,0 +1,313 @@
+---
+title: "Problem Set 5"
+subtitle: "Kasper Borys and Fernando De Stefanis"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(testthat)
+require(xtable)
+require(pander)
+require(kableExtra)
+require(ggplot2)
+require(texreg)
+require(readstata13) 
+require(sandwich)
+require(data.table)
+require(lmtest)
+require(maxLik)
+
+options(knitr.table.format = "html") 
+```
+
+<span class="label label-success">Question 1</span> Show the expression for $V_u$ given a fixed $\lambda$.
+
+<span class="label label-success">Answer</span> First, note that by fixing $\lambda$ the expression for $V_u$ does not include a maximization anymore, so it becomes the simple equality given by: $$ V_u = b-c(\lambda)+\lambda\frac{\rho W}{(1+r)r}+\frac{1-\lambda}{1+r}V_u$$
+
+Moving the terms containing $V_u$ to the left, this becomes: $$\left(1-\frac{1-\lambda}{1+r}\right) V_u = b-c(\lambda)+\lambda\frac{\rho W}{(1+r)r}$$
+
+Note that the coefficient on $V_u$ simplifies to $\frac{r+\lambda}{1+r}$, so that we get: $$V_u = \frac{1+r}{r+\lambda}\left(b-c(\lambda)+\lambda\frac{\rho W}{(1+r)r}\right)$$ as desired.
+
+<span class="label label-success">Question 2</span> Show the value of the optimal choice of $\lambda$ given $r\to 0$.
+
+<span class="label label-success">Answer</span> We can take the expression for a fixed $\lambda$ from Question 1 and obtain a first order condition on $\lambda$. Furthermore we substitute $c(\lambda) = \frac{a}{\gamma}\lambda^{1+\gamma}$
+
+We start with: $$(r+\lambda)V_u = (1+r)\left(b-\frac{a}{\gamma}\lambda^{1+\gamma}+\lambda\frac{\rho W}{(1+r)r}\right)$$
+
+Differentiating with respect to $\lambda$, we get
+$$V_u = -(1+r)a\frac{1+\gamma}{\gamma}\lambda^\gamma+\frac{\rho W}{r}$$
+
+Substituting the expression for $V_u$ that we derived in the previous section,  multiplying both sides by $r+\lambda$, and distributing the multiplication by $(1+r)$, we get:
+$$(1+r)b+ \left[- \frac{a}{\gamma}\lambda^{1+\gamma}(1+r) + (1+\gamma)\frac{a}{\gamma}\lambda^{1+\gamma}(1+r)\right]+r(1+r)(1+\gamma)\frac{a}{\gamma}\lambda^\gamma - \rho W = 0$$
+Now we manipulate the terms in the square brackets to get:
+$$(1+r)b + (1+r)a\lambda^{1+\gamma} + r(1+r)(1+\gamma)\frac{a}{\gamma}\lambda^\gamma - \rho W = 0$$
+
+Taking the limit of $r\to 0$, we get:
+$$\lim_{r\to 0}((1+r)b + (1+r)a\lambda^{1+\gamma} + r(1+r)(1+\gamma)\frac{a}{\gamma}\lambda^\gamma - \rho W) = \lim_{r\to 0}0$$
+which gives us, dropping the third term in the right-hand side,
+$$b+a\lambda^{1+\gamma}-\rho W = 0$$
+so we solve to obtain the desired result:
+$$\lim_{r\to 0}\lambda = \left(\frac{\rho W - b}{a}\right)^\frac{1}{1+\gamma}$$
+
+
+
+<span class="label label-success">Question 3</span> Show the value of the optimal choice of $\lambda$ given $r\to 0$.
+
+<span class="label label-success">Answer</span>
+
+```{r}
+
+p = list(rho=0.9,a = 3, gamma =1.5)
+p$n = 1000
+data = data.table(B = 0, W = exp(rnorm(p$n) -3))
+
+# solve for lambda
+data[, Lb := ((p$rho*W - B)/(p$a))^(1/(1+p$gamma))]
+data[, Lb := pmin(pmax(Lb,0),1)]
+
+data[, D  := rexp(p$n, rate = Lb)]
+
+ggplot(data,aes(x=W,y=Lb)) + geom_line() + theme_bw()
+
+#Question 3
+
+#W and D are data vectors
+#p is a vector that contains rho, a, and gamma
+#returns likelihood of D given W
+lik.homo <- function(W, D, p) {
+  loglik <- 0
+  for (i in 1:length(D)) {
+    z = (p$rho*W[i]/p$a)^(1/(1+p$gamma))
+    loglik <- loglik + (log(z*exp(-1*z*D[i]))) #- log(sqrt(2*pi)*(W[i])) - (log(W[i])^2)/2)
+  }
+  return(loglik)
+}
+
+
+lik.homo(data$W,data$D,p)
+
+#construct the grid 
+agrid = array(seq(1,5, length = 200), dim = c(200,1))
+gammagrid = array(seq(1,2, length = 200), dim = c(200,1))
+
+mle_est <- rep(0,2)
+lik_max <- -Inf
+for (i in 1:length(agrid)) {
+  for (j in 1:length(gammagrid)) {
+    p_temp <- list(rho=0.9,a = agrid[i], gamma = gammagrid[i], n=1000)
+    cur_like = lik.homo(data$W,data$D,p_temp)
+    if (cur_like > lik_max) {
+      lik_max = cur_like
+      mle_est = list(p_temp$a,p_temp$gamma)
+    }
+  }
+}
+mle_est
+
+```
+
+As we can see, the result of the MLE estimation is very close to the true parameters, as desired. 
+
+<span class="label label-success">Question 4</span> Find the closed form solution for $a$ given $\gamma$.
+
+<span class="label label-success">Answer</span> We take the expression for the log-likelihood of the exponential distribution, which is given by:
+
+$$\displaystyle\sum_{i=1}^n\left[log\left(\frac{\rho W}{a}^{\frac1{1+\gamma}}\cdot\exp\left(-\frac{\rho W}{a}^{\frac1{1+\gamma}}D_i\right)\right)\right]$$
+
+Manipulating the logs, we obtain:
+
+$$\displaystyle\sum_{i=1}^n\left[\frac1{1+\gamma}log\left(\frac{\rho W}{a}\right)-\frac{\rho W}{a}^{\frac1{1+\gamma}}D_i\right]$$
+
+
+We differentiate this with respect to $a$ and set it equal to zero:
+
+$$\displaystyle\sum_{i=1}^n\left[\frac1{1+\gamma}\left(-\frac1a\right)-\left(\frac1{1+\gamma}\right)\left(\frac{\rho W}{a}\right)^{\frac1{1+\gamma}-1}\left(-\frac1a\right)\left(\frac{\rho W}{a}\right)D_i\right]=0$$
+
+With some manipulation, we get:
+
+$$\displaystyle\left(\frac1{1+\gamma}\cdot\frac1a\right)\sum_{i=1}^n\left[\left(\frac{\rho W}{a}\right)^{\frac1{1+\gamma}}D_i-1\right]=0$$
+
+We now get rid of the multiplicative constant outside the sum and move the one to the right hand side: 
+
+$$\displaystyle\sum_{i=1}^n\left[\left(\frac{\rho W}{a}\right)^{\frac1{1+\gamma}}D_i\right]=n$$
+
+
+$$\displaystyle a^{-\frac1{1+\gamma}}\sum_{i=1}^n\left[\left(\rho W\right)^{\frac1{1+\gamma}}D_i\right]=n$$
+
+$$\displaystyle \sum_{i=1}^n\left[\left(\rho W\right)^{\frac1{1+\gamma}}D_i\right]=na^{\frac1{1+\gamma}}$$
+
+$$\displaystyle \left[\frac1n\sum_{i=1}^n\left(\left(\rho W\right)^{\frac1{1+\gamma}}D_i\right)\right]^{1+\gamma}=a$$
+
+This is the desired closed-form solution.
+
+<span class="label label-success">Questions 5 and 6</span>
+
+<span class="label label-success">Answer</span>First, the DGP.
+```{r}
+p = list(rho=0.9,a = c(1,3,5), gamma =1.5, pk=c(0.2,0.5,0.3))
+
+p$n = 1000
+data = data.table(B = 0, W = exp(rnorm(p$n) -2))
+
+# draw the latent type
+data[, k := sample.int(3,.N,prob = p$pk,replace=T)]
+
+# solve for lambda
+data[, Lb := ((p$rho*W - B)/(p$a[k]))^(1/(1+p$gamma))]
+data[, Lb := pmin(pmax(Lb,0),1)] # bound it between 0 and 1
+
+data[, D := rexp(p$n, rate = Lb)]
+```
+
+The function for the EM algorithm uses several helper functions. The first, below,  is a PDF for D given W and a.
+```{r}
+#pdf for D given W and a
+f <- function(w,d,p) {
+  z = (p$rho*w/p$a)^(1/(1+p$gamma))
+  return(z*exp(-1*z*d))
+}
+```
+
+The next function is the objective function we maximize in the algorithm.
+```{r}
+#likelihood-esque function
+#I'm copying this straight from Wooyong's EM pseudocode (TA session)
+l <- function(W, D, pk, p) {
+  res <- 0
+  for (i in 1:length(W)) {
+    temp <- 0
+    for (k in 1:3) {
+      p_temp <- list(rho = p$rho, a = p$a[[k]], gamma = p$gamma, n = p$n)
+      temp <- temp + pk[[k]]*f(W[i],D[i],p_temp)
+    }
+    res <- res + log(temp)
+  }
+  return(res)
+}
+```
+
+Then we have a function to estimate the parameters $a_k$, or $\theta$ depending on your preferred notation.
+```{r}
+#function that estimates a_k also known as theta in the literature
+ak_est <- function(K, W, D, p, k, qik) {
+  numer <- 0
+  denom <- 0
+  for (i in 1:p$n) {
+    if (K[i] == k) {
+      numer = numer + qik[[i]][[k]]*(p$rho*W[i])^(1/(1+p$gamma))*D[i]
+      denom = denom + qik[[i]][[k]]
+    }
+  }
+  res <- numer/denom
+  res = res^(1+p$gamma)
+  return(res)
+}
+```
+
+Finally we have our actually EM function itself.
+```{r}
+EM.rando <- function(K, W, D, p, S, delta) {
+  #initialize theta over iterations (in the parameters here, it's basically p)
+  theta <- vector(S, mode="list")
+  for (s in 1:(S+1)) {
+    theta[[s]] <- rep(1,3)
+  }
+  
+  #initialize probability vector over iterations
+  pk <- vector(S, mode="list")
+  for (s in 1:(S+1)) {
+    pk[[s]] <- rep(1/3,3)
+  }
+  
+  #initialize L, which will determine convergence
+  L <- rep(0,S+1)
+  L[1] = l(W,D,pk[[1]],list(rho=p$rho, a=theta[[1]], gamma=p$gamma, n=p$n))
+  
+  #initialize q_i(k)
+  qik <- vector(p$n, mode="list")
+  for (i in 1:p$n) {
+    qik[[i]] <- rep(0,3)
+  }
+  
+  
+  #run the meat of the algorithm
+  for (s in 1:S) {
+    #E step
+    for (i in 1:p$n) {
+      for (k in 1:3) {
+        denom <- 0
+        for (kprime in 1:3) {
+          denom = denom + pk[[s]][[kprime]]*f(W[i],D[i],list(rho=p$rho,a=theta[[s]][[kprime]], gamma=p$gamma))
+        }
+        qik[[i]][[k]] <- pk[[s]][[k]]*f(W[i],D[i],list(rho=p$rho,a=theta[[s]][[k]], gamma=p$gamma))/denom
+      }
+    }
+    
+    #M step
+    a_temp <- rep(0,3)
+    for (k in 1:3) {
+      a_temp[k] = ak_est(K, W, D, p, k, qik)
+    }
+    theta[[s+1]] <- a_temp
+    
+    
+    #estimate new pk which we're probably doing inefficiently due to lack of R skill
+    pk_temp <- rep(0,3)
+    for (k in 1:3) {
+      temp <- 0
+      for (i in 1:p$n) {
+        temp = temp + qik[[i]][[k]]
+      }
+      temp = temp/p$n
+      pk_temp[k] = temp
+    }
+    pk[[s+1]] <- pk_temp
+  
+    L[s+1] <- l(W,D,pk[[s+1]],list(rho=p$rho, a=theta[[s+1]], gamma=p$gamma, n=p$n))
+
+    if (abs(L[s+1] - L[s]) < delta) {
+      print("Improvement within tolerance")
+      return(list(pk[[s+1]],theta[[s+1]],L[s+1]))
+    }
+  }
+  print("Reached max iterations")
+  return(list(pk[[S+1]],theta[[S+1]],L[s+1]))
+}
+```
+
+Unfortunately, our function produces consistent but very biased results.
+```{r}
+EM.rando(data$k, data$W, data$D, p, 1000, 0.0001)
+```
+
+By design, we can pass custom vector $p$ as a parameter to this function, which takes care of Question 6.
+```{r}
+p_custom = list(rho = 0.9, gamma = 2, n = 1000)
+EM.rando(data$k, data$W, data$D, p_custom, 1000, 0.0001)
+```
+
+<span class="label label-success">Question 7</span>
+
+<span class="label label-success">Answer</span> We run our EM algorithm on a grid of $\gamma$ values, like earlier in this problem set, and try to find the one that maximizes likelihood as a way of recovering the true $\gamma$.
+```{r cache=TRUE, eval=FALSE}
+#we run our function over a grid of gamma values
+#to try and recover the true gamma (that maximizes likelihood)
+param_est <- vector(3, mode="list")
+lik_max <- -Inf
+for (i in 1:length(gammagrid)) {
+  p_temp <- list(rho=0.9, gamma = gammagrid[i], n=1000)
+  cur_like = EM.rando(data$k, data$W, data$D, p_temp, 1000, 0.0001)
+  if (cur_like[[3]][[1]] > lik_max) {
+    lik_max = cur_like[[3]][[1]]
+    param_est = cur_like
+  }
+}
+param_est
+```
